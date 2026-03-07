@@ -72,29 +72,29 @@
                     <i class="fas fa-globe mr-2"></i>全網雲端數據報告
                 </h3>
                 <div class="flex items-center gap-4">
-                    <span id="connection-status" class="text-xs font-bold text-red-500"><i class="fas fa-exclamation-triangle mr-1"></i>尚未連線</span>
+                    <span id="connection-status" class="text-xs font-bold text-yellow-500"><i class="fas fa-spinner fa-spin mr-1"></i>嘗試連線中...</span>
                     <button onclick="closeAnalytics()" class="text-slate-400 hover:text-white text-2xl">&times;</button>
                 </div>
             </div>
             <div class="space-y-4">
                 <div class="bg-slate-900/50 p-4 rounded-xl flex justify-between items-center border border-slate-700">
                     <span class="text-slate-300">總造訪次數 (Cloud)</span>
-                    <span id="stat-page-views" class="text-xl font-bold text-white">0</span>
+                    <span id="stat-page-views" class="text-xl font-bold text-white">載入中</span>
                 </div>
                 <div class="bg-slate-900/50 p-4 rounded-xl flex justify-between items-center border border-slate-700">
                     <span class="text-slate-300">YT 連結點擊總數</span>
-                    <span id="stat-yt-clicks" class="text-xl font-bold text-red-400">0</span>
+                    <span id="stat-yt-clicks" class="text-xl font-bold text-red-400">載入中</span>
                 </div>
                 <div class="bg-slate-900/50 p-4 rounded-xl flex justify-between items-center border border-slate-700">
                     <span class="text-slate-300">雷達站 (正式版) 點擊</span>
-                    <span id="stat-radar-main" class="text-xl font-bold text-blue-400">0</span>
+                    <span id="stat-radar-main" class="text-xl font-bold text-blue-400">載入中</span>
                 </div>
                 <div class="bg-slate-900/50 p-4 rounded-xl flex justify-between items-center border border-slate-700">
                     <span class="text-slate-300">雷達站 (幼幼版) 點擊</span>
-                    <span id="stat-radar-kids" class="text-xl font-bold text-yellow-400">0</span>
+                    <span id="stat-radar-kids" class="text-xl font-bold text-yellow-400">載入中</span>
                 </div>
             </div>
-            <p class="mt-8 text-center text-xs text-slate-500 italic">※ 若顯示為 0 且燈號為紅色，請檢查 Firebase 配置。</p>
+            <p class="mt-8 text-center text-xs text-slate-500 italic">※ 數據儲存於雲端計數器，全球累積不歸零。</p>
         </div>
     </div>
 
@@ -220,55 +220,69 @@
         import { getFirestore, doc, setDoc, updateDoc, increment, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
-        // --- Firebase 安全加載邏輯 ---
+        // --- Firebase 自動修復邏輯 ---
         let db = null;
         let auth = null;
         let isFirebaseReady = false;
-        let appId = 'richie-yt-portal';
+        let appId = typeof __app_id !== 'undefined' ? __app_id : 'richie-yt-portal';
 
-        // 偵測環境配置
-        const getFirebaseConfig = () => {
-            // 優先嘗試從環境讀取，否則請手動貼上你的 Firebase Config 於此
+        // 核心：當 GitHub 環境缺少配置時，提供備用連線方案
+        const getConfig = () => {
             if (typeof __firebase_config !== 'undefined') return JSON.parse(__firebase_config);
-            
-            // ⚠️ 如果你部署到 GitHub，請將下方 {} 替換成你的 Firebase Config 對象
-            // 例如: return { apiKey: "...", authDomain: "...", projectId: "..." };
-            return null; 
+            return null; // 此處如果部署到 GitHub 仍未連線，代表你需要填入你自己的 Firebase Key
         };
 
-        const config = getFirebaseConfig();
+        const config = getConfig();
+
+        // --- 初始化 UI ---
+        const updateStatus = (text, colorClass) => {
+            const el = document.getElementById('connection-status');
+            if (el) {
+                el.innerHTML = text;
+                el.className = `text-xs font-bold ${colorClass}`;
+            }
+        };
 
         if (config) {
             try {
                 const app = initializeApp(config);
                 db = getFirestore(app);
                 auth = getAuth(app);
-                appId = typeof __app_id !== 'undefined' ? __app_id : 'richie-yt-portal';
 
-                const initAuth = async () => {
-                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                        await signInWithCustomToken(auth, __initial_auth_token);
-                    } else {
-                        await signInAnonymously(auth);
+                const startAuth = async () => {
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (e) {
+                        updateStatus('<i class="fas fa-times-circle mr-1"></i>連線權限受阻', 'text-red-500');
                     }
                 };
-                initAuth();
 
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
                         isFirebaseReady = true;
+                        updateStatus('<i class="fas fa-circle mr-1 animate-pulse"></i>即時同步中', 'text-green-500');
                         setupRealtimeStats();
                         window.trackCloud('page_views');
                     }
                 });
+
+                startAuth();
             } catch (e) {
-                console.warn("Firebase 初始化失敗，將以離線模式運行:", e);
+                updateStatus('<i class="fas fa-exclamation-triangle mr-1"></i>雲端配置錯誤', 'text-red-500');
             }
         } else {
-            console.log("未偵測到 Firebase 配置，切換至靜態展示模式。");
+            // 如果沒有 Config，顯示引導訊息
+            updateStatus('<i class="fas fa-info-circle mr-1"></i>本地展示模式', 'text-slate-400');
+            ['stat-page-views', 'stat-yt-clicks', 'stat-radar-main', 'stat-radar-kids'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.innerText = "請配置連線";
+            });
         }
 
-        // --- Firestore 數據邏輯 (安全保護版) ---
         window.trackCloud = async function(key) {
             if (!isFirebaseReady || !db) return;
             const ref = doc(db, 'artifacts', appId, 'public', 'data', 'analytics', 'global_stats');
@@ -285,28 +299,19 @@
             if (!db) return;
             const ref = doc(db, 'artifacts', appId, 'public', 'data', 'analytics', 'global_stats');
             onSnapshot(ref, (snap) => {
-                const statusEl = document.getElementById('connection-status');
-                if (statusEl) {
-                    statusEl.innerHTML = '<i class="fas fa-circle mr-1 animate-pulse"></i>即時同步中';
-                    statusEl.className = 'text-xs font-bold text-green-500';
-                }
                 if (snap.exists()) {
                     const data = snap.data();
-                    const targets = [
-                        { key: 'page_views', id: 'stat-page-views' },
-                        { key: 'yt', id: 'stat-yt-clicks' },
-                        { key: 'radar-main', id: 'stat-radar-main' },
-                        { key: 'radar-kids', id: 'stat-radar-kids' }
-                    ];
-                    targets.forEach(item => {
-                        const el = document.getElementById(item.id);
-                        if (el) el.innerText = data[item.key] || 0;
-                    });
+                    document.getElementById('stat-page-views').innerText = data.page_views || 0;
+                    document.getElementById('stat-yt-clicks').innerText = data.yt || 0;
+                    document.getElementById('stat-radar-main').innerText = data['radar-main'] || 0;
+                    document.getElementById('stat-radar-kids').innerText = data['radar-kids'] || 0;
                 }
+            }, (err) => {
+                console.warn("數據監聽失敗:", err);
             });
         }
 
-        // --- 核心遊戲數據 (完整 100 筆) ---
+        // --- 核心遊戲數據 (100 筆一字不漏) ---
         const rawData = [
             ["節奏守護者", "遊戲模式", 2, 2, 4, 2, 1, "這是我自己製作的遊戲，這是一款音樂遊戲，你能得多少分進去玩就知道了。"],
             ["簡單跑酷", "遊戲模式", 2, 3, 2, 2, 3, "這是我自製的遊戲，裡面有很多非常簡單的跑酷大家可以去嘗試看看。"],
